@@ -1,0 +1,137 @@
+# doomscroll-tracker configuration
+#
+# Units used throughout:
+#   s            seconds of SOURCE time (presentation timestamps of the Mac recording)
+#   screen-h     fraction of the calibrated phone-screen height (normalized phone coords;
+#                x in [0,1] left->right, y in [0,1] top->bottom; x distances are converted
+#                to screen-h using calibration.screen_aspect so distances are isotropic)
+#   screen-h/s   screen heights per second
+#   img-w        fraction of the camera image width
+#   px           output canvas pixels (renderer)
+#
+# Copy this file (e.g. to config/mine.toml) and pass --config config/mine.toml to tune.
+# Any key you omit falls back to the value here.
+
+[tracking]                      # MediaPipe Hand Landmarker (only used by `track`)
+model_path = "models/hand_landmarker.task"
+num_hands = 2                   # detect both hands; the intended hand is chosen later in `detect`
+# Thresholds lowered from MediaPipe's 0.5 defaults: on the dim test footage this roughly doubled
+# coverage. Lower values admit more false detections (jump rejection in `detect` guards against
+# isolated ones). Raise them if the diagnostic video shows phantom hands.
+min_hand_detection_confidence = 0.2   # palm detector score threshold (0-1)
+min_hand_presence_confidence = 0.2    # landmark-model presence threshold (0-1)
+min_tracking_confidence = 0.2         # frame-to-frame box IoU threshold (0-1)
+# Preprocessing applied only to the image MediaPipe sees; landmarks are mapped back to original
+# image pixels, so calibration and diagnostics are unaffected.
+pad_bottom_px = 480             # black band added below the frame (helps when the palm/wrist is cut off by the bottom edge)
+clahe = true                    # local contrast equalization of luminance (helps dark hands against a bright screen)
+
+[hand]                          # which detected hand is "the scrolling hand" (used by `detect`)
+# How to (re)acquire the hand when there is no current track:
+#   "rightmost"   hand whose wrist is furthest right in the camera image
+#   "leftmost"    hand whose wrist is furthest left in the camera image
+#   "nearest_screen"  hand whose thumb tip is closest to the calibrated screen centre
+#   "label_left" / "label_right"  MediaPipe handedness label (NOTE: MediaPipe assumes a
+#                 mirrored selfie image, so labels may be swapped for unmirrored footage)
+select = "rightmost"
+max_assoc_distance = 0.12       # img-w: max wrist movement between observations to keep the same hand
+reacquire_after_s = 0.5         # s: after this long without the hand, re-select using `select`
+# Landmarks averaged into the single tracked "thumb point". MediaPipe indices: 4 THUMB_TIP,
+# 8 INDEX_TIP, 12 MIDDLE_TIP, 16 RING_TIP (3/7/11/15 are the joints below them).
+# [4] suits a side view with the whole hand in frame (Untitled.mov). In the dim, palm-cut-off
+# test.mov MediaPipe mislabeled the thumb as other fingers and [11, 12, 15, 16] worked better.
+point_landmarks = [4]
+
+[smoothing]                     # One-Euro filter in phone coords, time-aware, reset at every gap
+min_cutoff_hz = 4.0             # lower = smoother but laggier when slow
+beta = 4.0                      # higher = less lag when fast (per screen-h/s)
+d_cutoff_hz = 2.0               # cutoff for the internal speed estimate
+
+[detect]                        # upward-gesture state machine (used by `detect`)
+min_displacement = 0.12         # screen-h: total upward travel needed to accept a stroke
+min_speed = 0.6                 # screen-h/s: peak upward speed needed to accept a stroke
+start_speed = 0.35              # screen-h/s: upward speed that opens a candidate (hysteresis high)
+end_speed = 0.12                # screen-h/s: below this the thumb counts as stalled (hysteresis low)
+velocity_window_s = 0.066       # s: speed is measured over this time span (not per frame)
+pause_tolerance_s = 0.15        # s: stall shorter than this does not end a stroke
+reversal_distance = 0.03        # screen-h: downward retrace from the highest point that ends a stroke
+reversal_tolerance_s = 0.08     # s: sustained downward motion longer than this ends a stroke
+max_gap_s = 0.15                # s: tracking gaps longer than this end a stroke and are never bridged
+jump_distance = 0.30            # screen-h: single-step move larger than this is rejected as implausible
+jump_speed = 12.0               # screen-h/s: single-step speed larger than this is rejected
+boundary_tolerance = 0.06       # screen-h (or w): how far outside the screen still counts as "on screen"
+rebound_window_s = 0.2          # s: look this far before a stroke's start for the thumb's resting level...
+min_net_rise = 0.08             # screen-h: ...and require the stroke to rise at least this far above it
+                                #   (a brief downward dip + snap-back, e.g. a tracking glitch, is not a swipe)
+max_start_y = 0.95              # phone y: strokes must START at or above this (0 = top, 1 = bottom edge);
+                                #   excludes short pushes from the very bottom edge (fidgeting at the nav bar)
+backtrack_s = 0.25              # s: how far back to look for the true start (lowest point) of a stroke
+
+[render]
+width = 720                     # px output canvas (vertical)
+height = 1280
+fps = 30
+sim_scale = 0.5                 # pigment field resolution relative to output (0.5 -> 360x640 cells)
+seed = 20261019                 # fixed seed: brush shapes, deposition variation, grain
+fit = "stretch"                 # "stretch": phone x,y -> full canvas;  "contain": keep screen aspect, centre it
+
+[render.brush]                  # bristle brush; all *_px values are for a 720-px-wide canvas
+width_px = 50                   # px: brush width
+n_bristles = 14                 # bristles across the brush (more = finer streaks)
+bristle_softness = 1.2          # bristle width relative to bristle spacing (lower = hairier, higher = more solid paint)
+bristle_load_variation = 0.3   # 0-1: how unevenly paint is loaded across bristles (streakiness)
+dry_length = 0.45               # canvas heights of travel over which a bristle loses ~63% of its paint
+dry_break = 0.6                 # 0-1: how strongly drying breaks streaks into gaps toward the stroke end
+skip_scale_px = 28              # px: length of the gaps/skips along a bristle
+taper_in = 0.12                 # fraction of the stroke over which the brush presses down
+taper_out = 0.35                # fraction of the stroke over which it lifts off (flick tail)
+spacing_px = 1.0                # px: distance between brush samples along the path (smaller = smoother)
+path_smoothing_px = 6.0         # px: smoothing of the tracked path for drawing only (removes tracking wobble)
+density_per_pass = 2.0          # pigment density laid down by one full-load pass (density units)
+paper_grain = 0.25              # 0-1: paper tooth modulating deposition
+paper_grain_scale_px = 4.0      # px
+texture = "procedural"          # or a grayscale image path (e.g. your fingerprint scan), mapped along
+                                # each stroke like a ribbon; white = full deposit
+texture_strength = 0.6          # 0-1, only used with an image texture
+
+[render.bleed]
+# Pigment is never removed. Each deposit splits into wet paint (the visible brushstroke) and a small
+# permanent stain. Wet paint releases into the bleed layer, which spreads forever (during strokes
+# and pauses) through a fibrous surface, slowly turning the whole canvas brown.
+residue_fraction = 0.12         # 0-1: share of each stroke that stays put as a permanent stain
+bleed_time_s = 60.0             # s: time constant for wet paint to release into the bleed layer
+                                #    (after ~1x it is 63% bled, after ~3x 95%)
+distance_after_60s_px = 90.0    # px: typical spread distance sqrt(2*k*t) of bled pigment after 60 s
+                                #    (grows with sqrt(time): ~4x this after 16 min)
+fiber_variation = 0.6           # 0-1: how uneven (fibrous) the spreading is
+fiber_scale_px = 24.0           # px: size of the fibrous structure
+wet_spread_after_60s_px = 6.0   # px: how far wet paint creeps (feathers) through the fibres while still wet
+grid_downsample = 2             # bleed layer runs at 1/N of the pigment-field resolution (speed)
+
+[render.palette]
+# Ground colour from total pigment density D:  c = D / (D + density_scale)  ("hyperbolic"), or
+# c = 1 - exp(-D / density_scale) ("exp"). Stops are [c, "#RRGGBB"].
+curve = "hyperbolic"
+density_scale = 2.5             # density units: larger = more pigment needed to turn the ground brown
+stops = [
+  [0.00, "#F2C4A6"],            # peach / skin field
+  [0.10, "#E9AE96"],            # warmer peach
+  [0.25, "#D98B80"],            # dusty rose
+  [0.42, "#B85459"],            # rose-crimson
+  [0.62, "#932430"],            # deep rustic red
+  [0.82, "#721820"],            # oxblood
+  [1.00, "#4E0E15"],            # very dense, deepest red
+]
+grain_strength = 0.035          # 0-1: static surface grain (brightness modulation)
+
+[render.wet]                    # fresh (not yet bled) paint, drawn over the ground as a watercolour wash
+color_light = "#C2352E"         # brick red where the paint is thin
+color_dense = "#86141B"         # deep crimson where it is thick
+opacity = 0.78                  # 0-1: maximum opacity of wet paint (lower = more translucent wash)
+opacity_scale = 2.0             # density units: wet paint this dense is ~63% of max opacity
+dense_scale = 2.5               # density units: how quickly thick paint shifts toward color_dense
+edge_darkening = 0.9            # 0-1: darker rims where pigment gathers at the edge of a wet area
+edge_width_px = 3.0             # px: width of that rim
+granulation = 0.12              # 0-1: fine speckle where thin paint settles into the paper texture
+pooling = 0.4                   # 0-1: blotchy unevenness of the wash (watercolour pooling)
+pooling_scale_px = 40.0         # px: size of the pools

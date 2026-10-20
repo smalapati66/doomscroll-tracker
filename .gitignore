@@ -1,0 +1,22 @@
+# Virtual environment
+.venv/
+
+# Source footage (never commit recordings)
+footage/
+*.mov
+*.MOV
+*.mp4
+*.m4v
+*.avi
+
+# Generated data and outputs
+data/
+diagnostics/
+renders/
+models/*.task
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store

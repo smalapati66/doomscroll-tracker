@@ -1,0 +1,7 @@
+# Pinned versions checked against PyPI on 2026-10-19 (macOS arm64 wheels, Python 3.12/3.13).
+mediapipe==1.1.1            # Hand Landmarker (Tasks API); pulls opencv-contrib-python
+opencv-contrib-python==5.0.0.93  # use contrib build: mediapipe depends on it; do not also install opencv-python
+numpy==2.5.4
+av==19.0.1                  # PyAV: decode with real presentation timestamps, read rotation metadata
+imageio-ffmpeg==0.6.0       # bundled static ffmpeg binary for H.264 encoding (no global install)
+pytest==8.4.2
