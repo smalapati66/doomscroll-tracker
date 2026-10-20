@@ -1,0 +1,1 @@
+Tracking software for my art class. It tracks thumb flicks (scrolls).
